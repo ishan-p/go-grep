@@ -3,8 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-
-	gogrep "github.com/ishan-p/go-grep/grep"
 )
 
 func main() {
@@ -16,5 +14,5 @@ func main() {
 		return
 	}
 
-	gogrep.Grep(searchQuery, inputFile)
+	Grep(searchQuery, inputFile)
 }
