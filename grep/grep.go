@@ -18,23 +18,21 @@ func Grep(searchQuery string, inputFile string) {
 	defer fileHandler.Close()
 	fileBuffCh := make(chan string)
 	go readFileByLine(fileHandler, fileBuffCh)
+	result := []string{}
 	for text := range fileBuffCh {
 		searchResult := Find(searchQuery, text)
 		if len(searchResult) > 0 {
+			result = append(result, fmt.Sprintf("%s", searchResult))
 			fmt.Printf("%s\n", searchResult)
 		}
 	}
-	fmt.Println(string("\033[31m"), "test")
 }
 
 func readFileByLine(fileHandler *os.File, channel chan string) {
 	scanner := bufio.NewScanner(fileHandler)
-
 	for scanner.Scan() {
-
 		channel <- scanner.Text()
 	}
-
 	if err := scanner.Err(); err != nil {
 		log.Fatal(err)
 	}
