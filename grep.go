@@ -22,33 +22,37 @@ type Result struct {
 	mu           sync.Mutex
 }
 
+const maxOpenFileDescriptors = 1000
+
 func Grep(searchQuery string, inputFile string) {
 	input := Input{searchQuery, inputFile, []string{}}
 	input.parseFiles()
+
 	result := Result{channelInfo: make(map[string]chan string), searchResult: make(map[string][]string)}
 
+	var wg sync.WaitGroup
+
+	resultSyncChannel := make(chan string)
+	quit := make(chan int)
+	go result.writeToStdout(resultSyncChannel, quit)
+
+	fileDescriptorBuffer := make(chan int, maxOpenFileDescriptors)
 	for _, file := range input.inputFiles {
-		fileHandler, err := os.Open(file)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer fileHandler.Close()
 		fileBuffCh := make(chan string)
+		result.mu.Lock()
 		result.channelInfo[file] = fileBuffCh
 		result.searchResult[file] = []string{}
-		go readFileByLine(fileHandler, fileBuffCh)
-	}
-	var wg sync.WaitGroup
-	for _, file := range input.inputFiles {
+		result.mu.Unlock()
+		go readFileByLine(file, fileBuffCh, fileDescriptorBuffer)
 		wg.Add(1)
-		go result.gatherResult(input.searchQuery, file, &wg)
+		go result.gatherResult(input.searchQuery, file, resultSyncChannel, &wg)
 	}
+
 	wg.Wait()
-	for f, op := range result.searchResult {
-		for _, val := range op {
-			fmt.Print(string("\033[35m"), f, string("\033[0m"), ": ", val, "\n")
-		}
-	}
+
+	quit <- 1
+	close(resultSyncChannel)
+	close(quit)
 }
 
 func (input *Input) parseFiles() {
@@ -67,9 +71,27 @@ func (input *Input) parseFiles() {
 	}
 }
 
-func (result *Result) gatherResult(searchQuery string, fileName string, wg *sync.WaitGroup) {
+func (result *Result) writeToStdout(resultSyncChannel chan string, quit chan int) {
+	for {
+		select {
+		case fileName := <-resultSyncChannel:
+			result.mu.Lock()
+			for _, op := range result.searchResult[fileName] {
+				fmt.Print(string("\033[35m"), fileName, string("\033[0m"), ": ", op, "\n")
+			}
+			result.mu.Unlock()
+		case <-quit:
+			return
+		}
+	}
+}
+
+func (result *Result) gatherResult(searchQuery string, fileName string, resultSyncChannel chan string, wg *sync.WaitGroup) {
 	defer wg.Done()
-	for text := range result.channelInfo[fileName] {
+	result.mu.Lock()
+	fileReadChannel := result.channelInfo[fileName]
+	result.mu.Unlock()
+	for text := range fileReadChannel {
 		searchResult := find(searchQuery, text)
 		if len(searchResult) > 0 {
 			result.mu.Lock()
@@ -77,17 +99,28 @@ func (result *Result) gatherResult(searchQuery string, fileName string, wg *sync
 			result.mu.Unlock()
 		}
 	}
+	// Send message to result sync channel denoting current file search is complete
+	resultSyncChannel <- fileName
 }
 
-func readFileByLine(fileHandler *os.File, channel chan string) {
+func readFileByLine(filePath string, channel chan string, fileDescriptorBuffer chan int) {
+	fileDescriptorBuffer <- 1
+	fileHandler, err := os.Open(filePath)
+	defer func() {
+		fileHandler.Close()
+		close(channel)
+		<-fileDescriptorBuffer
+	}()
+	if err != nil {
+		log.Fatal(err)
+	}
 	scanner := bufio.NewScanner(fileHandler)
 	for scanner.Scan() {
 		channel <- scanner.Text()
 	}
 	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
+		log.Fatal(filePath, err)
 	}
-	close(channel)
 }
 
 func find(searchQuery string, text string) []byte {
