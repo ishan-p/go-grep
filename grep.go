@@ -10,12 +10,6 @@ import (
 	"sync"
 )
 
-type Input struct {
-	searchQuery  string
-	rootFilePath string
-	inputFiles   []string
-}
-
 type Result struct {
 	channelInfo  map[string]chan string
 	searchResult map[string][]string
@@ -25,8 +19,7 @@ type Result struct {
 const maxOpenFileDescriptors = 1000
 
 func Grep(searchQuery string, inputFile string) {
-	input := Input{searchQuery, inputFile, []string{}}
-	input.parseFiles()
+	filesToBeSearched := listFilesInDir(inputFile)
 
 	result := Result{channelInfo: make(map[string]chan string), searchResult: make(map[string][]string)}
 
@@ -37,7 +30,7 @@ func Grep(searchQuery string, inputFile string) {
 	go result.writeToStdout(resultSyncChannel, quit)
 
 	fileDescriptorBuffer := make(chan int, maxOpenFileDescriptors)
-	for _, file := range input.inputFiles {
+	for _, file := range filesToBeSearched {
 		fileBuffCh := make(chan string)
 		result.mu.Lock()
 		result.channelInfo[file] = fileBuffCh
@@ -45,7 +38,7 @@ func Grep(searchQuery string, inputFile string) {
 		result.mu.Unlock()
 		go readFileByLine(file, fileBuffCh, fileDescriptorBuffer)
 		wg.Add(1)
-		go result.gatherResult(input.searchQuery, file, resultSyncChannel, &wg)
+		go result.gatherResult(searchQuery, file, resultSyncChannel, &wg)
 	}
 
 	wg.Wait()
@@ -55,20 +48,22 @@ func Grep(searchQuery string, inputFile string) {
 	close(quit)
 }
 
-func (input *Input) parseFiles() {
-	err := filepath.Walk(input.rootFilePath,
+func listFilesInDir(rootFilePath string) []string {
+	inputFiles := []string{}
+	err := filepath.Walk(rootFilePath,
 		func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
 			if !info.IsDir() {
-				input.inputFiles = append(input.inputFiles[:], path)
+				inputFiles = append(inputFiles, path)
 			}
 			return nil
 		})
 	if err != nil {
 		log.Println(err)
 	}
+	return inputFiles
 }
 
 func (result *Result) writeToStdout(resultSyncChannel chan string, quit chan int) {
