@@ -133,12 +133,14 @@ func readFileByLine(filePath string, channel chan string, fileDescriptorBuffer c
 func find(searchQuery string, text string) []byte {
 	re := regexp.MustCompile(searchQuery)
 	input := []byte(text)
-	result := re.FindAll([]byte(text), -1)
+	result := re.FindAll(input, -1)
 	var output []byte
 	if len(result) > 0 {
+		output = input
 		for _, val := range result {
+			re = regexp.MustCompile(fmt.Sprintf("%s", val))
 			coloredOp := fmt.Sprintf("\033[31m%s\033[0m", val)
-			output = re.ReplaceAll(input, []byte(coloredOp))
+			output = re.ReplaceAll(output, []byte(coloredOp))
 		}
 	}
 	return output
