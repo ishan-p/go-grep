@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -99,6 +101,8 @@ func (result *Result) gatherResult(searchQuery string, fileName string, resultSy
 }
 
 func readFileByLine(filePath string, channel chan string, fileDescriptorBuffer chan int) {
+	var part []byte
+	var prefix bool
 	fileDescriptorBuffer <- 1
 	fileHandler, err := os.Open(filePath)
 	defer func() {
@@ -109,12 +113,20 @@ func readFileByLine(filePath string, channel chan string, fileDescriptorBuffer c
 	if err != nil {
 		log.Fatal(err)
 	}
-	scanner := bufio.NewScanner(fileHandler)
-	for scanner.Scan() {
-		channel <- scanner.Text()
+	reader := bufio.NewReader(fileHandler)
+	buffer := bytes.NewBuffer(make([]byte, 0))
+	for {
+		if part, prefix, err = reader.ReadLine(); err != nil {
+			break
+		}
+		buffer.Write(part)
+		if !prefix {
+			channel <- buffer.String()
+			buffer.Reset()
+		}
 	}
-	if err := scanner.Err(); err != nil {
-		log.Fatal(filePath, err)
+	if err == io.EOF {
+		err = nil
 	}
 }
 
